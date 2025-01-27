@@ -15,8 +15,14 @@ class OrderInfo:
 
 class AzureOpenAIChat:
     def __init__(self):
-        self.API_ENDPOINT = st.secrets.get("AZURE_OPENAI_API_ENDPOINT", "")
-        self.API_KEY = st.secrets.get("AZURE_OPENAI_API_KEY", "")
+        self.API_ENDPOINT = st.secrets.get("AZURE_OPENAI_API_ENDPOINT")
+        self.API_KEY = st.secrets.get("AZURE_OPENAI_API_KEY")
+        
+        if not self.API_ENDPOINT or not self.API_KEY:
+            raise ValueError(
+                "Azure OpenAI credentials not found. Please configure AZURE_OPENAI_API_ENDPOINT "
+                "and AZURE_OPENAI_API_KEY in your Streamlit secrets."
+            )
 
     def analyze_email(self, email_content: str) -> OrderInfo:
         """Analyze email content to determine if it's an order and extract relevant information"""
@@ -100,8 +106,15 @@ def main():
                     else:
                         st.warning("This email does not appear to be related to an order.")
                 
+                except ValueError as ve:
+                    st.error(str(ve))
+                except requests.exceptions.InvalidURL:
+                    st.error("Invalid Azure OpenAI API URL. Please check your AZURE_OPENAI_API_ENDPOINT configuration.")
+                except requests.exceptions.RequestException as e:
+                    st.error(f"API Request Error: {str(e)}")
                 except Exception as e:
-                    st.error(f"Error analyzing email: {str(e)}")
+                    st.error(f"Unexpected error: {str(e)}")
+                    st.error("Please check your Azure OpenAI configuration in Streamlit secrets.")
         else:
             st.warning("Please paste some email content to analyze.")
 

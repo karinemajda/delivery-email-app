@@ -120,3 +120,106 @@ def main():
 
 if __name__ == "__main__":
     main()
+echo ".streamlit/secrets.toml" >> .gitignore
+import streamlit as st
+import requests
+import json
+import re
+import pymssql
+from typing import Dict, Any
+class AzureOpenAIChat:
+    def __init__(self):
+        """Initialize API credentials from Streamlit secrets."""
+        self.API_ENDPOINT = st.secrets.get("AZURE_OPENAI_API_ENDPOINT", "")
+        self.API_KEY = st.secrets.get("AZURE_OPENAI_API_KEY", "")
+def extract_delivery_details(self, email_body: str, max_tokens: int = 300) -> Dict[str, Any]:
+prompt = f"""
+Extract delivery-related details from the following email body and return a JSON output with these keys:
+- delivery: "yes" if delivery is confirmed, otherwise "no".
+- price_num: Extracted price amount, default to 0.00 if not found.
+- description: Short description of the product if available.
+- order_id: Extracted order ID if available.
+- delivery_date: Extracted delivery date in YYYY-MM-DD format if available.
+- store: Store or sender name.
+- tracking_number: Extracted tracking number if available.
+- carrier: Extracted carrier name (FedEx, UPS, USPS, etc.) if available.
+
+Email Body:
+{email_body}
+
+Output JSON:
+"""
+response = requests.post(self.API_ENDPOINT, headers=headers, json=data)
+response.raise_for_status()
+return response.json()
+def extract_valid_json(text: str) -> str:
+    text = text.strip()
+    text = text.replace("```json", "").replace("```", "")
+
+    json_match = re.search(r"\{.*\}", text, re.DOTALL)
+    if json_match:
+        return json_match.group(0)
+
+    return text
+def insert_into_db(data: Dict[str, Any]):
+    conn = pymssql.connect(
+        server=st.secrets["AZURE_SQL_SERVER"],
+        user=st.secrets["AZURE_SQL_USERNAME"],
+        password=st.secrets["AZURE_SQL_PASSWORD"],
+        database=st.secrets["AZURE_SQL_DATABASE"]
+    )
+cursor.execute("""
+    IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='delivery_details' AND xtype='U')
+    CREATE TABLE delivery_details (
+        id INT IDENTITY(1,1) PRIMARY KEY,
+        delivery NVARCHAR(10),
+        price_num FLOAT,
+        description NVARCHAR(255),
+        order_id NVARCHAR(50),
+        delivery_date DATE,
+        store NVARCHAR(255),
+        tracking_number NVARCHAR(100),
+        carrier NVARCHAR(50)
+    )
+""")
+conn.commit()
+cursor.execute("""
+    INSERT INTO delivery_details (delivery, price_num, description, order_id, delivery_date, store, tracking_number, carrier)
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+""", (
+    data["delivery"], 
+    data["price_num"], 
+    data["description"], 
+    data["order_id"], 
+    data["delivery_date"], 
+    data["store"], 
+    data["tracking_number"], 
+    data["carrier"]
+))
+
+conn.commit()
+conn.close()
+def main():
+    st.set_page_config(page_title="Delivery Email Extractor", page_icon="📩")
+    st.title("Delivery Email Extractor")
+
+    email_body = st.text_area("Paste the email body below:")
+
+    if st.button("Extract Details") and email_body:
+        with st.spinner("Extracting details..."):
+            chat_client = AzureOpenAIChat()
+            response = chat_client.extract_delivery_details(email_body)
+
+            if response and "choices" in response:
+                extracted_json = extract_valid_json(response["choices"][0]["message"]["content"])
+                
+                try:
+                    parsed_json = json.loads(extracted_json)
+                    st.json(parsed_json)
+                    insert_into_db(parsed_json)
+                    st.success("Data successfully inserted into Azure SQL Database!")
+
+                except json.JSONDecodeError:
+                    st.error("Failed to parse JSON response.")
+                    st.text(extracted_json)
+streamlit run app.py

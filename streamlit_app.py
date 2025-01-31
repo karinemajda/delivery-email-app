@@ -7,7 +7,62 @@ from typing import Dict, Any, List
 import pandas as pd
 from datetime import datetime
 
-# [Previous AzureOpenAIChat class remains the same]
+class AzureOpenAIChat:
+    def __init__(self):
+        """Initialize API credentials from Streamlit secrets."""
+        self.API_ENDPOINT = st.secrets.get("AZURE_OPENAI_API_ENDPOINT", "")
+        self.API_KEY = st.secrets.get("AZURE_OPENAI_API_KEY", "")
+
+    def extract_delivery_details(self, email_body: str, max_tokens: int = 300) -> Dict[str, Any]:
+        """
+        Send an email body to Azure OpenAI and extract structured delivery-related details.
+        """
+        headers = {
+            "Content-Type": "application/json",
+            "api-key": self.API_KEY,
+        }
+
+        prompt = f"""
+        Extract delivery-related details from the following email body and return a JSON output with these keys:
+        - delivery: "yes" if delivery is confirmed, otherwise "no".
+        - price_num: Extracted price amount, default to 0.00 if not found.
+        - description: Short description of the product if available.
+        - order_id: Extracted order ID if available.
+        - delivery_date: Extracted delivery date in YYYY-MM-DD format if available.
+        - store: Store or sender name.
+        - tracking_number: Extracted tracking number if available.
+        - carrier: Extracted carrier name (FedEx, UPS, USPS, etc.) if available.
+
+        Email Body:
+        {email_body}
+
+        Output JSON:
+        """
+
+        data = {
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": max_tokens,
+            "temperature": 0.5,
+            "top_p": 1,
+            "frequency_penalty": 0,
+            "presence_penalty": 0,
+        }
+
+        response = requests.post(self.API_ENDPOINT, headers=headers, json=data)
+        response.raise_for_status()
+
+        return response.json()
+
+def extract_valid_json(text: str) -> str:
+    """Extract a valid JSON string from the model's output."""
+    text = text.strip()
+    text = text.replace("```json", "").replace("```", "")
+
+    json_match = re.search(r"\{.*\}", text, re.DOTALL)
+    if json_match:
+        return json_match.group(0)
+
+    return text
 
 def get_connection():
     """Create and return a database connection."""

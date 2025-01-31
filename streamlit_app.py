@@ -151,27 +151,6 @@ def get_delivery_history() -> pd.DataFrame:
         if conn is None:
             return pd.DataFrame()
 
-        cursor = conn.cursor()
-        
-        # First check if the table exists
-        cursor.execute("""
-            IF EXISTS (SELECT * FROM sysobjects WHERE name='delivery_details' AND xtype='U')
-            BEGIN
-                SELECT 1
-            END
-            ELSE
-            BEGIN
-                SELECT 0
-            END
-        """)
-        table_exists = cursor.fetchone()[0]
-        
-        if not table_exists:
-            return pd.DataFrame(columns=[
-                'id', 'delivery', 'price_num', 'description', 'order_id',
-                'delivery_date', 'store', 'tracking_number', 'carrier', 'created_at'
-            ])
-        
         query = """
             SELECT 
                 id,
@@ -199,132 +178,6 @@ def get_delivery_history() -> pd.DataFrame:
             'delivery_date', 'store', 'tracking_number', 'carrier', 'created_at'
         ])
 
-def format_delivery_date(date_str: str) -> str:
-    """Format the delivery date string or return empty string if invalid."""
-    if not date_str:
-        return ""
-    try:
-        return datetime.strptime(date_str, '%Y-%m-%d').strftime('%B %d, %Y')
-    except ValueError:
-        return date_str
-
-def display_delivery_details(data: Dict[str, Any], is_current: bool = True):
-    """Display delivery details in a formatted table."""
-    try:
-        if is_current:
-            st.markdown("### 📦 Current Analysis")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            status_color = "success" if data.get("delivery") == "yes" else "error"
-            st.markdown(
-                f"""
-                <div style='background-color: {'#28a745' if status_color == 'success' else '#dc3545'}; 
-                            padding: 10px; 
-                            border-radius: 5px; 
-                            color: white; 
-                            display: inline-block;
-                            margin-bottom: 10px;'>
-                    {'✓ Delivery Confirmed' if data.get("delivery") == "yes" else '⚠ Delivery Not Confirmed'}
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-        with col2:
-            if data.get("price_num", 0) > 0:
-                st.markdown(f"### 💰 ${data['price_num']:.2f}")
-
-        details_dict = {
-            "Field": [
-                "Order ID",
-                "Description",
-                "Store",
-                "Delivery Date",
-                "Carrier",
-                "Tracking Number"
-            ],
-            "Value": [
-                data.get("order_id", ""),
-                data.get("description", ""),
-                data.get("store", ""),
-                format_delivery_date(data.get("delivery_date", "")),
-                data.get("carrier", ""),
-                data.get("tracking_number", "")
-            ]
-        }
-        
-        df = pd.DataFrame(details_dict)
-        st.dataframe(
-            df,
-            hide_index=True,
-            column_config={
-                "Field": st.column_config.Column(width="medium"),
-                "Value": st.column_config.Column(width="large")
-            }
-        )
-
-        if data.get("tracking_number") and data.get("carrier"):
-            st.info(f"💡 You can track your package using the tracking number: {data['tracking_number']}")
-    except Exception as e:
-        st.error(f"Error displaying delivery details: {str(e)}")
-
-def display_history_table(df: pd.DataFrame):
-    """Display historical delivery details in an interactive table with error handling."""
-    try:
-        st.markdown("### 📋 Analysis History")
-        
-        if df is None or df.empty:
-            st.info("No previous delivery emails analyzed yet.")
-            return
-
-        # Format the DataFrame for display
-        display_df = df.copy()
-        
-        # Format price as currency
-        display_df['price_num'] = display_df['price_num'].apply(lambda x: f"${x:.2f}")
-        
-        # Format delivery date
-        display_df['delivery_date'] = pd.to_datetime(display_df['delivery_date']).dt.strftime('%B %d, %Y')
-        
-        # Format created_at timestamp
-        display_df['created_at'] = pd.to_datetime(display_df['created_at']).dt.strftime('%Y-%m-%d %H:%M:%S')
-        
-        # Create delivery status column with emojis
-        display_df['status'] = display_df['delivery'].apply(
-            lambda x: "✅" if x == "yes" else "❌"
-        )
-
-        # Reorder and rename columns for display
-        columns_to_display = {
-            'created_at': 'Analyzed On',
-            'status': 'Status',
-            'store': 'Store',
-            'description': 'Description',
-            'price_num': 'Price',
-            'delivery_date': 'Delivery Date',
-            'tracking_number': 'Tracking Number',
-            'carrier': 'Carrier'
-        }
-        
-        display_df = display_df[columns_to_display.keys()].rename(columns=columns_to_display)
-
-        # Display the interactive table
-        st.dataframe(
-            display_df,
-            hide_index=True,
-            column_config={
-                "Status": st.column_config.Column(width="small"),
-                "Store": st.column_config.Column(width="medium"),
-                "Description": st.column_config.Column(width="large"),
-                "Price": st.column_config.Column(width="small"),
-                "Analyzed On": st.column_config.Column(width="medium"),
-            }
-        )
-    except Exception as e:
-        st.error(f"Error displaying history table: {str(e)}")
-
 def main():
     """Main application function."""
     st.set_page_config(
@@ -332,78 +185,41 @@ def main():
         page_icon="📩",
         layout="wide"
     )
-    
-    st.markdown("""
-        <style>
-        .stButton>button {
-            width: 100%;
-        }
-        .stTextArea>div>div>textarea {
-            height: 200px;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-    
+
     st.title("📩 Delivery Email Extractor")
     st.markdown("---")
 
     # Create table if it doesn't exist
     create_table_if_not_exists()
 
-    # Input section
-    col1, col2 = st.columns([2, 1])
+    email_body = st.text_area("📧 Paste the email body below:")
     
-    with col1:
-        email_body = st.text_area("📧 Paste the email body below:")
-        
-        if st.button("🔍 Extract Details") and email_body:
-            with st.spinner("📊 Analyzing email content..."):
-                chat_client = AzureOpenAIChat()
-                response = chat_client.extract_delivery_details(email_body)
+    if st.button("🔍 Extract Details") and email_body:
+        with st.spinner("📊 Analyzing email content..."):
+            chat_client = AzureOpenAIChat()
+            response = chat_client.extract_delivery_details(email_body)
 
-                if response and "choices" in response:
-                    extracted_json = response["choices"][0]["message"]["content"]
-                    extracted_json = extract_valid_json(extracted_json)
+            if response and "choices" in response:
+                extracted_json = response["choices"][0]["message"]["content"]
+                extracted_json = extract_valid_json(extracted_json)
 
-                    try:
-                        parsed_json = json.loads(extracted_json)
-                        display_delivery_details(parsed_json)
-                        
-                        if insert_into_db(parsed_json):
-                            st.success("✅ Data successfully saved to database!")
-                        
-                    except json.JSONDecodeError:
-                        st.error("❌ Failed to parse the response. Please try again.")
-                        st.text(extracted_json)
-                else:
-                    st.error("❌ Sorry, I couldn't extract the details. Please try again.")
-    
-    # Display history in a separate column
-    with col2:
-        st.markdown("### 📊 Statistics")
-        try:
-            # Fetch and display some basic statistics
-            df = get_delivery_history()
-            if not df.empty:
-                total_deliveries = len(df)
-                confirmed_deliveries = len(df[df['delivery'] == 'yes'])
-                total_spent = df['price_num'].sum()
-                
-                st.metric("Total Analyzed", total_deliveries)
-                if total_deliveries > 0:
-                    st.metric("Confirmed Deliveries", 
-                             f"{confirmed_deliveries} ({(confirmed_deliveries/total_deliveries*100):.1f}%)")
-                    st.metric("Total Spent", f"${total_spent:.2f}")
+                try:
+                    parsed_json = json.loads(extracted_json)
+                    if insert_into_db(parsed_json):
+                        st.success("✅ Data successfully saved to database!")
+                    
+                except json.JSONDecodeError:
+                    st.error("❌ Failed to parse the response. Please try again.")
+                    st.text(extracted_json)
             else:
-                st.metric("Total Analyzed", 0)
-                st.metric("Confirmed Deliveries", "0 (0%)")
-                st.metric("Total Spent", "$0.00")
-        except Exception as e:
-            st.warning("Unable to load statistics. Please try again later.")
-
-    # Display full history table
+                st.error("❌ Sorry, I couldn't extract the details. Please try again.")
+    
+    # Display history in a separate section
     st.markdown("---")
-    display_history_table(get_delivery_history())
+    df = get_delivery_history()
+    if not df.empty:
+        st.write("### 📋 Delivery Details History")
+        st.dataframe(df)
 
 if __name__ == "__main__":
     main()

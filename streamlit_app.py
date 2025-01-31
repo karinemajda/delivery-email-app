@@ -264,4 +264,15 @@ def main():
         if not df.empty:
             total_deliveries = len(df)
             confirmed_deliveries = len(df[df['delivery'] == 'yes'])
-            total_spent = df['price
+            total_spent = df['price_num'].sum()
+            
+            st.metric("Total Analyzed", total_deliveries)
+            st.metric("Confirmed Deliveries", f"{confirmed_deliveries} ({(confirmed_deliveries/total_deliveries*100):.1f}%)")
+            st.metric("Total Spent", f"${total_spent:.2f}")
+
+    # Display full history table
+    st.markdown("---")
+    display_history_table(get_delivery_history())
+
+if __name__ == "__main__":
+    main()

@@ -7,7 +7,106 @@ from typing import Dict, Any
 import pandas as pd
 from datetime import datetime
 
-# [Previous AzureOpenAIChat class and other functions remain the same]
+class AzureOpenAIChat:
+    def __init__(self):
+        """Initialize API credentials from Streamlit secrets."""
+        self.API_ENDPOINT = st.secrets.get("AZURE_OPENAI_API_ENDPOINT", "")
+        self.API_KEY = st.secrets.get("AZURE_OPENAI_API_KEY", "")
+
+    def extract_delivery_details(self, email_body: str, max_tokens: int = 300) -> Dict[str, Any]:
+        """
+        Send an email body to Azure OpenAI and extract structured delivery-related details.
+        """
+        headers = {
+            "Content-Type": "application/json",
+            "api-key": self.API_KEY,
+        }
+
+        prompt = f"""
+        Extract delivery-related details from the following email body and return a JSON output with these keys:
+        - delivery: "yes" if delivery is confirmed, otherwise "no".
+        - price_num: Extracted price amount, default to 0.00 if not found.
+        - description: Short description of the product if available.
+        - order_id: Extracted order ID if available.
+        - delivery_date: Extracted delivery date in YYYY-MM-DD format if available.
+        - store: Store or sender name.
+        - tracking_number: Extracted tracking number if available.
+        - carrier: Extracted carrier name (FedEx, UPS, USPS, etc.) if available.
+
+        Email Body:
+        {email_body}
+
+        Output JSON:
+        """
+
+        data = {
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": max_tokens,
+            "temperature": 0.5,
+            "top_p": 1,
+            "frequency_penalty": 0,
+            "presence_penalty": 0,
+        }
+
+        response = requests.post(self.API_ENDPOINT, headers=headers, json=data)
+        response.raise_for_status()
+
+        return response.json()
+
+def extract_valid_json(text: str) -> str:
+    """Extract a valid JSON string from the model's output."""
+    text = text.strip()
+    text = text.replace("```json", "").replace("```", "")
+
+    json_match = re.search(r"\{.*\}", text, re.DOTALL)
+    if json_match:
+        return json_match.group(0)
+
+    return text
+
+def insert_into_db(data: Dict[str, Any]):
+    """Insert extracted JSON data into an Azure SQL Database using pymssql."""
+    conn = pymssql.connect(
+        server=st.secrets["AZURE_SQL_SERVER"],
+        user=st.secrets["AZURE_SQL_USERNAME"],
+        password=st.secrets["AZURE_SQL_PASSWORD"],
+        database=st.secrets["AZURE_SQL_DATABASE"]
+    )
+
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='delivery_details' AND xtype='U')
+        CREATE TABLE delivery_details (
+            id INT IDENTITY(1,1) PRIMARY KEY,
+            delivery NVARCHAR(10),
+            price_num FLOAT,
+            description NVARCHAR(255),
+            order_id NVARCHAR(50),
+            delivery_date DATE,
+            store NVARCHAR(255),
+            tracking_number NVARCHAR(100),
+            carrier NVARCHAR(50)
+        )
+    """)
+    conn.commit()
+
+    cursor.execute("""
+        INSERT INTO delivery_details (delivery, price_num, description, order_id, delivery_date, store, tracking_number, carrier)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+    """, (
+        data["delivery"],
+        data["price_num"],
+        data["description"],
+        data["order_id"],
+        data["delivery_date"],
+        data["store"],
+        data["tracking_number"],
+        data["carrier"]
+    ))
+
+    conn.commit()
+    conn.close()
 
 def format_delivery_date(date_str: str) -> str:
     """Format the delivery date string or return empty string if invalid."""
@@ -20,15 +119,11 @@ def format_delivery_date(date_str: str) -> str:
 
 def display_delivery_details(data: Dict[str, Any]):
     """Display delivery details in a formatted table with styled elements."""
-    
-    # Create a styled header
     st.markdown("### 📦 Delivery Details")
     
-    # Create two columns for key information
     col1, col2 = st.columns(2)
     
     with col1:
-        # Delivery Status with colored badge
         status_color = "success" if data["delivery"] == "yes" else "error"
         st.markdown(
             f"""
@@ -48,7 +143,6 @@ def display_delivery_details(data: Dict[str, Any]):
         if data["price_num"] > 0:
             st.markdown(f"### 💰 ${data['price_num']:.2f}")
 
-    # Create a DataFrame for the main details
     details_dict = {
         "Field": [
             "Order ID",
@@ -70,7 +164,6 @@ def display_delivery_details(data: Dict[str, Any]):
     
     df = pd.DataFrame(details_dict)
     
-    # Apply styling to the DataFrame
     st.dataframe(
         df,
         hide_index=True,
@@ -84,7 +177,6 @@ def display_delivery_details(data: Dict[str, Any]):
         }
     )
 
-    # If there's a tracking number, add a tracking link suggestion
     if data.get("tracking_number") and data.get("carrier"):
         st.info(f"💡 You can track your package using the tracking number: {data['tracking_number']}")
 
@@ -96,7 +188,6 @@ def main():
         layout="centered"
     )
     
-    # Add custom CSS for better styling
     st.markdown("""
         <style>
         .stButton>button {
@@ -111,7 +202,6 @@ def main():
     st.title("📩 Delivery Email Extractor")
     st.markdown("---")
 
-    # Text area for the user to input an email body
     email_body = st.text_area("📧 Paste the email body below:")
 
     if st.button("🔍 Extract Details") and email_body:
@@ -125,11 +215,7 @@ def main():
 
                 try:
                     parsed_json = json.loads(extracted_json)
-                    
-                    # Display the formatted table instead of raw JSON
                     display_delivery_details(parsed_json)
-
-                    # Insert extracted data into Azure SQL Database
                     insert_into_db(parsed_json)
                     st.success("✅ Data successfully saved to database!")
 
